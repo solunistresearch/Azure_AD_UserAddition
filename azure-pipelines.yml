@@ -1,46 +1,41 @@
-Connect-MgGraph
+pipeline {
+    agent any
 
-# Specify the URL of the CSV file in your GitHub repository
-$GitHubURL = "https://raw.githubusercontent.com/solunistresearch/Azure_AD_UserAddition/main/NewAADUsers.csv"
-
-# Create password profile
-$PasswordProfile = @{
-    Password                             = "P@ssw0rd!"
-    ForceChangePasswordNextSignIn        = $true
-    ForceChangePasswordNextSignInWithMfa = $true
-}
-
-try {
-    # Download the CSV file from the GitHub repository
-    $CSVFileContents = Invoke-RestMethod -Uri $GitHubURL
-
-    # Convert the CSV file contents to PowerShell objects
-    $AADUsers = $CSVFileContents | ConvertFrom-Csv
-
-    # Loop through each row containing user details in the CSV file
-    foreach ($User in $AADUsers) {
-        $UserParams = @{
-            DisplayName       = $User.DisplayName
-            MailNickName      = $User.MailNickName
-            UserPrincipalName = $User.UserPrincipalName
-            Department        = $User.Department
-            JobTitle          = $User.JobTitle
-            Mobile            = $User.Mobile
-            Country           = $User.Country
-            EmployeeId        = $User.EmployeeId
-            PasswordProfile   = $PasswordProfile
-            AccountEnabled    = $true
+    stages {
+        stage('Check for changes in NewAADUsers.csv') {
+            steps {
+                script {
+                    // Fetch commit logs for NewAADUsers.csv
+                    def commitLogs = sh(script: 'curl -s https://api.github.com/repos/solunistresearch/Azure_AD_UserAddition/commits?path=NewAADUsers.csv', returnStdout: true).trim()
+                    echo "Commit logs: ${commitLogs}"
+                }
+            }
         }
-
-        try {
-            $null = New-MgUser @UserParams -ErrorAction Stop
-            Write-Host ("Successfully created the account for {0}" -f $User.DisplayName) -ForegroundColor Green
+        
+        stage('Adding user in the Azure AD') {
+            steps {
+                script {
+                    // Download the PowerShell script
+                    sh 'curl -s -O https://github.com/solunistresearch/Azure_AD_UserAddition/raw/main/Add-NewAADUsers.ps1'
+                    
+                    // Execute the PowerShell script
+                    def scriptOutput = powershell(returnStdout: true, script: '.\\Add-NewAADUsers.ps1')
+                    echo "Script output: ${scriptOutput}"
+                }
+            }
         }
-        catch {
-            Write-Host ("Failed to create the account for {0}. Error: {1}" -f $User.DisplayName, $_.Exception.Message) -ForegroundColor Red
+        
+        stage('Output check') {
+            steps {
+                script {
+                    // Print the output of the script executed in the previous stage
+                    echo "Script output: ${scriptOutput}"
+                }
+            }
         }
     }
-}
-catch {
-    Write-Host ("Failed to download the CSV file from the GitHub repository. Error: {0}" -f $_.Exception.Message) -ForegroundColor Red
+
+    triggers {
+        pollSCM('*/5 * * * *') // Schedule the pipeline to check for changes every 5 minutes
+    }
 }
